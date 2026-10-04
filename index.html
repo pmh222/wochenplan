@@ -58,6 +58,7 @@ button{cursor:pointer}
 .btn:disabled{opacity:.5;cursor:default}
 .btn.primary{background:var(--strong);color:var(--bg);border-color:var(--strong)}
 .btn.danger{color:var(--danger)}
+.btn.danger-bg{background:var(--danger);border-color:var(--danger);color:#fff}
 .btn.ghost{background:transparent;border-color:transparent;color:var(--muted)}
 .btn.icon{padding:7px 10px;min-width:34px}
 .seg{display:inline-flex;background:var(--sunk);border-radius:9px;padding:3px}
@@ -572,6 +573,23 @@ function BlockSheet({initial,isNew,onSave,onCopy,onDelete,onClose}){
   );
 }
 
+/* ─────────── Sicherheitsabfrage ─────────── */
+function ConfirmDialog({title,text,ok,onDone}){
+  useEsc(()=>onDone(false));
+  return(
+    <div className="ov" onMouseDown={e=>e.target===e.currentTarget&&onDone(false)}>
+      <div className="panel" role="alertdialog" aria-modal="true" aria-label={title} style={{maxWidth:420}}>
+        <h2>{title}</h2>
+        <p style={{fontSize:14.5}}>{text}</p>
+        <div className="foot"><span className="grow"/>
+          <button className="btn ghost" autoFocus onClick={()=>onDone(false)}>Abbrechen</button>
+          <button className="btn primary danger-bg" onClick={()=>onDone(true)}>{ok}</button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 /* ─────────── Regeln ─────────── */
 function RulesDrawer({onClose}){
   useEsc(onClose);
@@ -603,7 +621,8 @@ function CopyRow({value}){
 }
 function SubscribeSheet({onClose}){
   useEsc(onClose);
-  const [types,setTypes]=useState(()=>Object.keys(TYPES).filter(k=>k!=='arbeit'));
+  const [types,setTypes]=useState(()=>{try{const t=JSON.parse(localStorage.getItem('wochenplan-abo-typen'));if(Array.isArray(t)&&t.length)return t.filter(k=>k in TYPES);}catch{}return Object.keys(TYPES).filter(k=>k!=='arbeit');});
+  useEffect(()=>{try{localStorage.setItem('wochenplan-abo-typen',JSON.stringify(types));}catch{}},[types]);
   const [fill,setFill]=useState(true);
   const [notes,setNotes]=useState(true);
   const [name,setName]=useState('Wochenplan');
@@ -618,7 +637,7 @@ function SubscribeSheet({onClose}){
       <div className="panel" role="dialog" aria-modal="true" aria-label="Kalender-Abo" style={{maxWidth:560}}>
         <h2>Kalender-Abo</h2>
         {DEMO?<p className="hint" style={{fontSize:14}}>Im Demo-Modus gibt es kein Abo. Dafür braucht es Supabase und die Edge Function aus der Anleitung.</p>:<>
-        <div className="field"><span className="lab">Diese Blöcke erscheinen im Kalender</span>
+        <div className="field"><span className="lab">Diese Blockarten erscheinen im Kalender (antippen zum An- und Abwählen)</span>
           <div className="chips typesel">{Object.entries(TYPES).map(([k,t])=>(
             <button key={k} type="button" className="chip" style={{'--c':t.c}} aria-pressed={types.includes(k)} onClick={()=>toggle(k)}><i className="dot"/>{t.l}</button>))}</div>
           <div className="nudge" style={{margin:'8px 0 0'}}>
@@ -640,6 +659,7 @@ function SubscribeSheet({onClose}){
           <li>Ohne Kamera: Einstellungen → Apps → Kalender → Kalenderaccounts → Account hinzufügen → Andere → Kalenderabo hinzufügen, Link einfügen.</li>
           <li>Unter Kalenderaccounts → Datenabgleich „Alle 15 Minuten“ wählen, sonst holt das iPhone Änderungen nur stündlich.</li>
           <li>Für zwei Farben zwei Abos anlegen, z. B. „Nur Training“ und „Nur Alltag“.</li>
+          <li>Auswahl geändert? Dann ändert sich auch der Link. Auf dem iPhone das alte Abo löschen und mit dem neuen Link neu abonnieren.</li>
         </ol>
         <div className="field" style={{marginTop:14}}><span className="lab">Dein Planer-Link mit Schlüssel. Nicht weitergeben, wer ihn hat, kann den Plan ändern.</span><CopyRow value={app}/></div>
         </>}
@@ -702,14 +722,22 @@ function Planner(){
 
   /* Aktionen */
   const guarded=async(fn,okMsg)=>{setBusy(true);try{await fn();if(okMsg)say(okMsg);}catch(e){say(errText(e),'err');await load();}setBusy(false);};
-  const applyTemplate=()=>{if(blocks.length&&!confirm('Diese Woche durch die Musterwoche ersetzen?'))return;
+  const [ask,setAsk]=useState(null);
+  const confirmBox=opts=>new Promise(res=>setAsk({...opts,res}));
+  const applyTemplate=async()=>{
+    if(!await confirmBox({title:'Musterwoche übernehmen?',ok:'Ja, Musterwoche übernehmen',
+      text:blocks.length
+        ?`Alle ${blocks.length} Blöcke der KW ${isoWeek(monday)} werden gelöscht und durch die Musterwoche ersetzt. Änderungen, die du in dieser Woche gemacht hast, gehen verloren.`
+        :`Die leere KW ${isoWeek(monday)} wird mit der Musterwoche gefüllt.`}))return;
     guarded(async()=>{const t=await getTemplate();await api.clear(key);setBlocks(await api.insert(t.map(b=>clean({...b,done:false},key))));},'Musterwoche übernommen');};
-  const saveAsTemplate=()=>{if(!confirm('Die Musterwoche durch diese Woche ersetzen?'))return;
+  const saveAsTemplate=async()=>{
+    if(!await confirmBox({title:'Musterwoche überschreiben?',ok:'Ja, Musterwoche überschreiben',
+      text:`Deine bisherige Musterwoche wird komplett gelöscht und durch die ${blocks.length} Blöcke der KW ${isoWeek(monday)} ersetzt. Das lässt sich nicht rückgängig machen.`}))return;
     guarded(async()=>{await api.clear('template');await api.insert(blocks.map(b=>clean({...b,done:false},'template')));},'Als Musterwoche gespeichert');};
-  const clearWeek=()=>{if(!confirm('Alle Blöcke dieser Woche löschen?'))return;
+  const clearWeek=async()=>{
+    if(!await confirmBox({title:'Woche leeren?',ok:'Ja, alle Blöcke löschen',
+      text:`Alle ${blocks.length} Blöcke der KW ${isoWeek(monday)} werden gelöscht. Die Musterwoche bleibt unverändert.`}))return;
     guarded(async()=>{await api.clear(key);setBlocks([]);},'Woche geleert');};
-  const resetTemplate=()=>{if(!confirm('Musterwoche auf die ursprüngliche Vorlage zurücksetzen?'))return;
-    guarded(async()=>{await api.clear('template');setBlocks(await seedTemplate());},'Musterwoche zurückgesetzt');};
   const patchBlock=async(id,patch)=>{const prev=blocks;setBlocks(bs=>bs.map(b=>b.id===id?{...b,...patch}:b));
     try{await api.update(id,patch);return true;}catch(e){setBlocks(prev);say(errText(e),'err');return false;}};
   const newSheet=(day,start,end)=>setSheet({isNew:true,block:{type:'lauf',title:'',note:'',recipes:'',netto_min:null,done:false,day,start_min:start,end_min:end}});
@@ -805,7 +833,6 @@ function Planner(){
             <button className="btn" disabled={busy||loading||!blocks.length} onClick={saveAsTemplate}>Als Musterwoche speichern</button>
             <button className="btn danger" disabled={busy||loading||!blocks.length} onClick={clearWeek}>Leeren</button>
           </>}
-          {tpl&&<button className="btn" disabled={busy||loading} onClick={resetTemplate}>Auf Vorlage zurücksetzen</button>}
           <span className="sep"/>
           <button className="btn" onClick={()=>setAbo(true)}>Kalender-Abo</button>
           <button className="btn primary" onClick={()=>setRules(true)}>Regeln</button>
@@ -908,6 +935,7 @@ function Planner(){
       />}
       {rules&&<RulesDrawer onClose={()=>setRules(false)}/>}
       {abo&&<SubscribeSheet onClose={()=>setAbo(false)}/>}
+      {ask&&<ConfirmDialog {...ask} onDone={v=>{ask.res(v);setAsk(null);}}/>}
       {toast&&<div className={`toast${toast.kind==='err'?' err':''}`} role="status">{toast.msg}</div>}
     </div>
   );
