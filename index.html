@@ -436,6 +436,16 @@ const api={
     const{data,error}=await sb.from('week_notes').select('content').eq('plan_key',PLAN).eq('week_key',key).maybeSingle();
     if(error)throw error;return data?data.content:'';
   },
+  async getAbo(){
+    if(DEMO)return lsRead('wochenplan-demo-abo',null);
+    const{data,error}=await sb.from('plan_settings').select('abo').eq('plan_key',PLAN).maybeSingle();
+    if(error)throw error;return data?data.abo:null;
+  },
+  async saveAbo(abo){
+    if(DEMO){lsWrite('wochenplan-demo-abo',abo);return;}
+    const{error}=await sb.from('plan_settings').upsert({plan_key:PLAN,abo,updated_at:new Date().toISOString()},{onConflict:'plan_key'});
+    if(error)throw error;
+  },
   async saveNote(key,content){
     if(DEMO){const n=lsRead(LS_DEMO_NOTES,{});n[key]=content;lsWrite(LS_DEMO_NOTES,n);return;}
     const{error}=await sb.from('week_notes').upsert({plan_key:PLAN,week_key:key,content,updated_at:new Date().toISOString()},{onConflict:'plan_key,week_key'});
@@ -444,7 +454,7 @@ const api={
 };
 const errText=e=>{
   const m=(e&&(e.message||e.details))||String(e);
-  if(e&&(e.code==='42P01'||e.code==='PGRST205'||e.code==='PGRST204'||e.code==='42703'||(/(week_blocks|week_notes|plan_key|recipes)/.test(m)&&/(exist|find|schema cache|column)/i.test(m))))
+  if(e&&(e.code==='42P01'||e.code==='PGRST205'||e.code==='PGRST204'||e.code==='42703'||(/(week_blocks|week_notes|plan_settings|plan_key|recipes)/.test(m)&&/(exist|find|schema cache|column)/i.test(m))))
     return 'Datenbank noch nicht eingerichtet. Bitte setup.sql einmal im Supabase SQL-Editor ausführen.';
   if(e&&e.code==='42501')return 'Zugriff verweigert. Plan-Schlüssel prüfen oder setup.sql erneut ausführen.';
   if(/Failed to fetch|NetworkError|Load failed/i.test(m))return 'Keine Verbindung zu Supabase. Internet prüfen und neu laden.';
@@ -621,36 +631,43 @@ function CopyRow({value}){
 }
 function SubscribeSheet({onClose}){
   useEsc(onClose);
-  const [types,setTypes]=useState(()=>{try{const t=JSON.parse(localStorage.getItem('wochenplan-abo-typen'));if(Array.isArray(t)&&t.length)return t.filter(k=>k in TYPES);}catch{}return Object.keys(TYPES).filter(k=>k!=='arbeit');});
-  useEffect(()=>{try{localStorage.setItem('wochenplan-abo-typen',JSON.stringify(types));}catch{}},[types]);
-  const [fill,setFill]=useState(true);
-  const [notes,setNotes]=useState(true);
-  const [name,setName]=useState('Wochenplan');
-  const toggle=k=>setTypes(t=>t.includes(k)?t.filter(x=>x!==k):[...t,k]);
-  const qs=new URLSearchParams({key:PLAN,name:name||'Wochenplan',typen:types.join(',')});
-  if(fill)qs.set('vorlage','1');if(!notes)qs.set('notizen','0');
-  const https=`${SUPA_URL}/functions/v1/${ICS_FUNCTION}?${qs.toString()}`;
+  const DEF={typen:Object.keys(TYPES).filter(k=>k!=='arbeit'),vorlage:true,notizen:true,name:'Wochenplan'};
+  const [abo,setAbo]=useState(null);
+  const [state,setState]=useState('Lädt …');
+  const timer=useRef(null);
+  useEffect(()=>{let alive=true;
+    api.getAbo().then(a=>{if(!alive)return;setAbo({...DEF,...(a||{})});setState(a?'':'Noch nicht gespeichert');})
+      .catch(e=>{if(alive){setAbo(DEF);setState(errText(e));}});
+    return()=>{alive=false;};},[]);
+  const update=patch=>{setAbo(prev=>{const next={...prev,...patch};setState('Speichert …');clearTimeout(timer.current);
+    timer.current=setTimeout(async()=>{try{await api.saveAbo(next);setState('Gespeichert. Das iPhone übernimmt die Auswahl beim nächsten Abgleich.');}catch(e){setState(errText(e));}},500);
+    return next;});};
+  const types=abo?abo.typen:[];
+  const toggle=k=>update({typen:types.includes(k)?types.filter(x=>x!==k):[...types,k]});
+  const https=`${SUPA_URL}/functions/v1/${ICS_FUNCTION}?key=${PLAN}`;
   const webcal=https.replace(/^https:/,'webcal:');
   const app=appLink(PLAN);
   return(
     <div className="ov" onMouseDown={e=>e.target===e.currentTarget&&onClose()}>
       <div className="panel" role="dialog" aria-modal="true" aria-label="Kalender-Abo" style={{maxWidth:560}}>
         <h2>Kalender-Abo</h2>
-        {DEMO?<p className="hint" style={{fontSize:14}}>Im Demo-Modus gibt es kein Abo. Dafür braucht es Supabase und die Edge Function aus der Anleitung.</p>:<>
+        {!abo?<p className="hint">Lädt …</p>:<>
         <div className="field"><span className="lab">Diese Blockarten erscheinen im Kalender (antippen zum An- und Abwählen)</span>
           <div className="chips typesel">{Object.entries(TYPES).map(([k,t])=>(
             <button key={k} type="button" className="chip" style={{'--c':t.c}} aria-pressed={types.includes(k)} onClick={()=>toggle(k)}><i className="dot"/>{t.l}</button>))}</div>
           <div className="nudge" style={{margin:'8px 0 0'}}>
-            <button type="button" className="btn sm" onClick={()=>setTypes(SPORT)}>Nur Training</button>
-            <button type="button" className="btn sm" onClick={()=>setTypes(Object.keys(TYPES).filter(k=>!SPORT.includes(k)))}>Nur Alltag</button>
-            <button type="button" className="btn sm" onClick={()=>setTypes(Object.keys(TYPES))}>Alles</button>
+            <button type="button" className="btn sm" onClick={()=>update({typen:[...SPORT]})}>Nur Training</button>
+            <button type="button" className="btn sm" onClick={()=>update({typen:Object.keys(TYPES).filter(k=>!SPORT.includes(k))})}>Nur Alltag</button>
+            <button type="button" className="btn sm" onClick={()=>update({typen:Object.keys(TYPES)})}>Alles</button>
           </div>
         </div>
         <label className="field" style={{display:'block'}}><span className="lab">Name des Kalenders</span>
-          <input className="inp" value={name} onChange={e=>setName(e.target.value)}/></label>
-        <label className="check" style={{marginBottom:6}}><input type="checkbox" checked={fill} onChange={e=>setFill(e.target.checked)}/>Ungeplante Wochen mit der Musterwoche füllen</label>
-        <label className="check" style={{marginBottom:14}}><input type="checkbox" checked={notes} onChange={e=>setNotes(e.target.checked)}/>Wochennotizen als Termin am Montag</label>
-        <div className="field"><span className="lab">Abo-Link</span><CopyRow value={webcal}/></div>
+          <input className="inp" value={abo.name} onChange={e=>update({name:e.target.value})}/></label>
+        <label className="check" style={{marginBottom:6}}><input type="checkbox" checked={!!abo.vorlage} onChange={e=>update({vorlage:e.target.checked})}/>Ungeplante Wochen mit der Musterwoche füllen</label>
+        <label className="check" style={{marginBottom:8}}><input type="checkbox" checked={abo.notizen!==false} onChange={e=>update({notizen:e.target.checked})}/>Wochennotizen als Termin am Montag</label>
+        <p className="st" role="status" style={{fontSize:13,color:'var(--muted)',marginBottom:14,minHeight:18}}>{state}</p>
+        {DEMO?<p className="hint" style={{fontSize:14}}>Im Demo-Modus gibt es kein Abo. Dafür braucht es Supabase und die Edge Function.</p>:<>
+        <div className="field"><span className="lab">Abo-Link (bleibt immer gleich, auch wenn du die Auswahl änderst)</span><CopyRow value={webcal}/></div>
         <div className="qrs">
           <figure><QR text={webcal}/><figcaption>Mit der iPhone-Kamera scannen<br/>und „Abonnieren“ tippen</figcaption></figure>
           <figure><QR text={app}/><figcaption>Planer auf dem iPhone öffnen,<br/>dann „Zum Home-Bildschirm“</figcaption></figure>
@@ -658,11 +675,10 @@ function SubscribeSheet({onClose}){
         <ol className="steps">
           <li>Ohne Kamera: Einstellungen → Apps → Kalender → Kalenderaccounts → Account hinzufügen → Andere → Kalenderabo hinzufügen, Link einfügen.</li>
           <li>Unter Kalenderaccounts → Datenabgleich „Alle 15 Minuten“ wählen, sonst holt das iPhone Änderungen nur stündlich.</li>
-          <li>Für zwei Farben zwei Abos anlegen, z. B. „Nur Training“ und „Nur Alltag“.</li>
-          <li>Auswahl geändert? Dann ändert sich auch der Link. Auf dem iPhone das alte Abo löschen und mit dem neuen Link neu abonnieren.</li>
+          <li>Änderungen an der Auswahl wirken auf das bestehende Abo. Sofort sehen: in der Kalender-App unter „Kalender“ die Liste nach unten ziehen.</li>
         </ol>
         <div className="field" style={{marginTop:14}}><span className="lab">Dein Planer-Link mit Schlüssel. Nicht weitergeben, wer ihn hat, kann den Plan ändern.</span><CopyRow value={app}/></div>
-        </>}
+        </>}</>}
         <div className="foot"><span className="grow"/><button className="btn primary" onClick={onClose}>Fertig</button></div>
       </div>
     </div>
