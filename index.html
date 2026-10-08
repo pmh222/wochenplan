@@ -63,6 +63,8 @@ button{cursor:pointer}
 .btn.icon{padding:7px 10px;min-width:34px}
 .seg{display:inline-flex;background:var(--sunk);border-radius:9px;padding:3px}
 .seg button{border:0;background:transparent;border-radius:7px;padding:5px 12px;font-size:13.5px;font-weight:600;color:var(--muted)}
+.seg.persons{margin-bottom:14px}
+.seg.persons button{font-size:14.5px;padding:6px 16px}
 .seg button[aria-pressed="true"]{background:var(--surface);color:var(--text);box-shadow:0 1px 2px rgba(0,0,0,.08)}
 .sep{width:1px;height:24px;background:var(--line);margin:0 4px}
 
@@ -234,6 +236,8 @@ const TYPES={
   rad:      {l:'Rad',c:'#2C9A55',sport:true},
   lauf:     {l:'Lauf',c:'#E2632A',sport:true},
   kraft:    {l:'Kraft',c:'#8455EC',sport:true},
+  handball: {l:'Handballtraining',c:'#C2362F',sport:true},
+  handballspiel:{l:'Handballspiel',c:'#8E1F3A',sport:true},
   mobi:     {l:'Mobilisation / Yoga',c:'#13A09C'},
   wecker:   {l:'Wecker',c:'#DDB12B'},
   essen:    {l:'Essen',c:'#C48C58',recipe:true},
@@ -244,9 +248,11 @@ const TYPES={
   ruhe:     {l:'Meditation / Ruhe',c:'#8593F5'},
   bett:     {l:'Bett',c:'#3F4D7E'},
   planung:  {l:'Wochenplanung',c:'#CC5487'},
+  freizeit: {l:'Freizeit',c:'#9DB52E'},
   sonst:    {l:'Sonstiges',c:'#94A3B8'},
 };
-const SPORT=['schwimmen','rad','lauf','kraft'];
+const SPORT=['schwimmen','rad','lauf','kraft','handball','handballspiel'];
+const CORE_SPORT=['schwimmen','rad','lauf','kraft'];
 
 const RULES=[
   ['Abendschluss um 21:00','Nichts Aktivierendes mehr danach, auch keine Baustelle. Nach späten Einheiten (Mo, Mi) nur noch runterfahren.'],
@@ -296,14 +302,25 @@ const readKey=()=>{
 const genKey=()=>{const a=new Uint8Array(18);crypto.getRandomValues(a);return btoa(String.fromCharCode(...a)).replace(/\+/g,'-').replace(/\//g,'_').replace(/=+$/,'');};
 const appLink=k=>`${location.origin}${location.pathname}#k=${k}`;
 
-let PLAN='', sb=null;
-function connect(k){
+/* Personen: Yvis Plan hat einen eigenen Schlüssel = dein Schlüssel + „-yvi“. Dein Plan bleibt unberührt. */
+const PROFILES=[
+  {id:'paul',name:'Paul Moritz',suffix:'',race:true,rules:true,target:TARGET_MIN,abo:true},
+  {id:'yvi',name:'Yvi',suffix:'-yvi',race:false,rules:false,target:null,abo:false},
+];
+const PROFILE_LS='wochenplan-profil';
+const readProfile=()=>{try{return PROFILES.find(p=>p.id===localStorage.getItem(PROFILE_LS))||PROFILES[0];}catch{return PROFILES[0];}};
+const makeClient=k=>window.supabase.createClient(SUPA_URL,SUPA_KEY,{auth:{persistSession:false,autoRefreshToken:false},global:{headers:{'x-plan-key':k}}});
+
+let PLAN='', BASE='', PROFILE=PROFILES[0], sb=null;
+function connect(base,profile=PROFILES[0]){
+  const k=base+profile.suffix;
+  BASE=base;PROFILE=profile;
   if(PLAN===k)return;
   PLAN=k;
-  try{localStorage.setItem(KEY_LS,k);}catch{}
+  try{localStorage.setItem(KEY_LS,base);}catch{}
   if(!DEMO){
-    sb=window.supabase.createClient(SUPA_URL,SUPA_KEY,{auth:{persistSession:false,autoRefreshToken:false},global:{headers:{'x-plan-key':k}}});
-    if(!location.hash.includes('k='))history.replaceState(null,'',location.pathname+location.search+'#k='+k);
+    sb=makeClient(k);
+    if(!location.hash.includes('k='))history.replaceState(null,'',location.pathname+location.search+'#k='+base);
   }
 }
 
@@ -396,6 +413,74 @@ const TEMPLATE=[
   T(6,'22:00','22:45','bett','Bett'),
 ];
 
+/* ─────────── Yvis Musterwoche (Wecker und Bett kommen aus Pauls Musterwoche) ─────────── */
+const LVM=d=>[T(d,'08:00','12:30','arbeit','LVM'),T(d,'12:30','14:00','essen','Mittagspause'),T(d,'14:00','17:30','arbeit','LVM')];
+const YVI_TEMPLATE=[
+  // Montag
+  T(0,'06:00','07:30','kraft','XSports Dissen'),
+  T(0,'07:30','08:00','essen','Frühstück'),
+  ...LVM(0),
+  T(0,'18:15','18:45','essen','Abendessen'),
+  T(0,'19:00','22:00','ruhe','Lutze Frauensauna'),
+  // Dienstag
+  T(1,'07:15','07:45','essen','Frühstück'),
+  ...LVM(1),
+  T(1,'17:45','18:00','essen','Snack'),
+  T(1,'18:30','20:30','handball','Handballtraining KBS'),
+  T(1,'20:45','21:15','essen','Abendessen'),
+  // Mittwoch
+  T(2,'07:15','07:45','essen','Frühstück'),
+  ...LVM(2),
+  T(2,'18:00','22:00','freizeit','Isi'),
+  // Donnerstag
+  T(3,'07:15','07:45','essen','Frühstück'),
+  ...LVM(3),
+  T(3,'18:00','19:00','lauf','Laufen'),
+  T(3,'19:00','19:30','essen','Abendessen'),
+  T(3,'19:30','21:00','baustelle','Baustelle'),
+  // Freitag
+  T(4,'06:00','07:30','kraft','XSports Dissen'),
+  T(4,'07:30','08:00','essen','Frühstück'),
+  T(4,'08:00','14:30','arbeit','LVM'),
+  T(4,'14:30','15:00','essen','Mittagessen'),
+  T(4,'17:30','20:00','baustelle','Baustelle'),
+  T(4,'20:00','20:30','essen','Abendessen'),
+  // Samstag
+  T(5,'06:45','07:15','essen','Frühstück'),
+  T(5,'12:00','12:45','essen','Mittagessen'),
+  T(5,'13:00','17:30','baustelle','Baustelle'),
+  T(5,'19:30','20:00','essen','Abendessen'),
+  // Sonntag
+  T(6,'07:00','08:30','lauf','Laufen'),
+  T(6,'08:30','09:00','essen','Frühstück'),
+  T(6,'11:45','12:30','essen','Essen'),
+  T(6,'12:30','18:00','baustelle','Baustelle'),
+  T(6,'19:00','19:30','essen','Abendessen'),
+];
+async function paulTemplateRows(){
+  if(DEMO)return lsRead('wochenplan-demo-v2',[]).filter(r=>(r.plan_key||BASE)===BASE&&r.week_key==='template');
+  const{data,error}=await makeClient(BASE).from('week_blocks').select('*').eq('plan_key',BASE).eq('week_key','template');
+  if(error)throw error;return data||[];
+}
+// Yvi steht mit Paul auf, außer ihr Morgensport beginnt zu früh, dann 30 min vor dem Sport
+async function yviTemplate(){
+  let paul=[];try{paul=await paulTemplateRows();}catch{}
+  const first=(d,type)=>paul.filter(b=>b.day===d&&b.type===type).sort((a,b)=>a.start_min-b.start_min)[0];
+  const out=[...YVI_TEMPLATE];
+  for(let d=0;d<7;d++){
+    const sport=YVI_TEMPLATE.filter(b=>b.day===d&&SPORT.includes(b.type)&&b.start_min<9*60).map(b=>b.start_min).sort((a,b)=>a-b)[0];
+    const pw=first(d,'wecker');
+    let w=pw?pw.start_min:6*60+30, withPaul=!!pw;
+    if(sport!=null&&w>sport-15){w=sport-30;withPaul=false;}
+    out.push({day:d,start_min:w,end_min:w+15,type:'wecker',title:withPaul?'Wecker (mit Paul)':'Wecker',netto_min:null,note:'',recipes:''});
+    // Frühstück nie vor dem Wecker
+    out.forEach((x,i)=>{if(x.day===d&&x.title==='Frühstück'&&x.start_min<w+15){const dur=x.end_min-x.start_min;out[i]={...x,start_min:w+15,end_min:w+15+dur};}});
+    const pb=first(d,'bett'); const bs=pb?pb.start_min:22*60+15;
+    out.push({day:d,start_min:bs,end_min:Math.min(1440,bs+45),type:'bett',title:'Bett',netto_min:null,note:'',recipes:''});
+  }
+  return out;
+}
+
 /* ─────────── Datenzugriff (Supabase oder Demo im Browser) ─────────── */
 const LS_DEMO='wochenplan-demo-v2', LS_DEMO_NOTES='wochenplan-demo-notes-v2';
 const lsRead=(k,f)=>{try{return JSON.parse(localStorage.getItem(k))||f;}catch{return f;}};
@@ -406,7 +491,7 @@ const clean=(b,key)=>({plan_key:PLAN,week_key:key,day:b.day,start_min:b.start_mi
 
 const api={
   async list(key){
-    if(DEMO)return lsRead(LS_DEMO,[]).filter(r=>r.week_key===key);
+    if(DEMO)return lsRead(LS_DEMO,[]).filter(r=>r.week_key===key&&(r.plan_key||PLAN)===PLAN);
     const{data,error}=await sb.from('week_blocks').select('*').eq('plan_key',PLAN).eq('week_key',key);
     if(error)throw error;return data;
   },
@@ -427,12 +512,12 @@ const api={
     if(error)throw error;
   },
   async clear(key){
-    if(DEMO){lsWrite(LS_DEMO,lsRead(LS_DEMO,[]).filter(r=>r.week_key!==key));return;}
+    if(DEMO){lsWrite(LS_DEMO,lsRead(LS_DEMO,[]).filter(r=>!(r.week_key===key&&(r.plan_key||PLAN)===PLAN)));return;}
     const{error}=await sb.from('week_blocks').delete().eq('plan_key',PLAN).eq('week_key',key);
     if(error)throw error;
   },
   async getNote(key){
-    if(DEMO)return lsRead(LS_DEMO_NOTES,{})[key]||'';
+    if(DEMO)return lsRead(LS_DEMO_NOTES,{})[PLAN+'|'+key]||'';
     const{data,error}=await sb.from('week_notes').select('content').eq('plan_key',PLAN).eq('week_key',key).maybeSingle();
     if(error)throw error;return data?data.content:'';
   },
@@ -447,7 +532,7 @@ const api={
     if(error)throw error;
   },
   async saveNote(key,content){
-    if(DEMO){const n=lsRead(LS_DEMO_NOTES,{});n[key]=content;lsWrite(LS_DEMO_NOTES,n);return;}
+    if(DEMO){const n=lsRead(LS_DEMO_NOTES,{});n[PLAN+'|'+key]=content;lsWrite(LS_DEMO_NOTES,n);return;}
     const{error}=await sb.from('week_notes').upsert({plan_key:PLAN,week_key:key,content,updated_at:new Date().toISOString()},{onConflict:'plan_key,week_key'});
     if(error)throw error;
   },
@@ -460,7 +545,7 @@ const errText=e=>{
   if(/Failed to fetch|NetworkError|Load failed/i.test(m))return 'Keine Verbindung zu Supabase. Internet prüfen und neu laden.';
   return m;
 };
-const seedTemplate=()=>api.insert(TEMPLATE.map(b=>clean(b,'template')));
+const seedTemplate=async()=>api.insert((PROFILE.id==='yvi'?await yviTemplate():TEMPLATE).map(b=>clean(b,'template')));
 const getTemplate=async()=>{const rows=await api.list('template');return rows.length?rows:await seedTemplate();};
 
 /* ─────────── Auswertung: Regeln prüfen ─────────── */
@@ -536,11 +621,11 @@ function BlockSheet({initial,isNew,onSave,onCopy,onDelete,onClose}){
         <h2>{isNew?'Block anlegen':'Block bearbeiten'}</h2>
         <div className="field"><span className="lab">Art</span>
           <div className="chips">{Object.entries(TYPES).map(([k,t])=>(
-            <button key={k} type="button" className="chip" style={{'--c':t.c}} aria-pressed={f.type===k} onClick={()=>set('type',k)}>
+            <button key={k} type="button" className="chip" style={{'--c':t.c}} aria-pressed={f.type===k} onClick={()=>{set('type',k);if(k==='handballspiel'&&!(f.title||'').trim())set('title','Handballspiel: ');}}>
               <i className="dot"/>{t.l}</button>))}</div>
         </div>
         <label className="field" style={{display:'block'}}><span className="lab">Titel</span>
-          <input className="inp" value={f.title||''} placeholder={TYPES[f.type].l} onChange={e=>set('title',e.target.value)}/></label>
+          <input className="inp" value={f.title||''} placeholder={f.type==='handballspiel'?'Handballspiel: Heim vs Gast':TYPES[f.type].l} onChange={e=>set('title',e.target.value)}/></label>
         <div className="grid3 field">
           <label><span style={lab}>Tag</span>
             <select className="inp" value={f.day} onChange={e=>set('day',e.target.value)}>{DAYS_LONG.map((d,i)=><option key={i} value={i}>{d}</option>)}</select></label>
@@ -704,7 +789,7 @@ function WeekNotes({weekKey,label}){
 }
 
 /* ─────────── Planer ─────────── */
-function Planner(){
+function Planner({onProfile}){
   const narrow=useNarrow();
   const [monday,setMonday]=useState(()=>mondayOf(new Date()));
   const [tpl,setTpl]=useState(false);
@@ -806,7 +891,7 @@ function Planner(){
   const shown=useMemo(()=>preview&&preview.id!=='__new'?blocks.map(b=>b.id===preview.id?{...b,...preview}:b):blocks,[blocks,preview]);
   const {hints,bad,sleep}=useMemo(()=>analyze(blocks),[blocks]);
   const stats=useMemo(()=>{
-    const by={schwimmen:0,rad:0,lauf:0,kraft:0},perDay=Array(7).fill(0);let arbeit=0,bau=0;
+    const by=Object.fromEntries(SPORT.map(k=>[k,0])),perDay=Array(7).fill(0);let arbeit=0,bau=0;
     blocks.forEach(b=>{const dur=b.end_min-b.start_min;
       if(SPORT.includes(b.type)){const n=b.netto_min??dur;by[b.type]+=n;perDay[b.day]+=n;}
       if(b.type==='arbeit')arbeit+=dur;if(b.type==='baustelle')bau+=dur;});
@@ -827,12 +912,16 @@ function Planner(){
     <div className="app">
       {DEMO&&<div className="demo">Demo-Modus: Änderungen bleiben nur in diesem Browser.</div>}
 
+      <div className="seg persons" role="group" aria-label="Person">
+        {PROFILES.map(p=><button key={p.id} aria-pressed={PROFILE.id===p.id} onClick={()=>onProfile(p)}>{p.name}</button>)}
+      </div>
+
       <header className="top">
         <div>
           <div className="kw">{tpl?'Musterwoche':`KW ${isoWeek(monday)}`}</div>
           <div className="sub">
             <span>{tpl?'Vorlage für jede neue Woche':rangeLabel(monday)}</span>
-            <span><b>{weeksToRace}</b> Wochen bis Frankfurt</span>
+            {PROFILE.race&&<span><b>{weeksToRace}</b> Wochen bis Frankfurt</span>}
           </div>
         </div>
         <div className="actions">
@@ -850,26 +939,26 @@ function Planner(){
             <button className="btn danger" disabled={busy||loading||!blocks.length} onClick={clearWeek}>Leeren</button>
           </>}
           <span className="sep"/>
-          <button className="btn" onClick={()=>setAbo(true)}>Kalender-Abo</button>
-          <button className="btn primary" onClick={()=>setRules(true)}>Regeln</button>
+          {PROFILE.abo&&<button className="btn" onClick={()=>setAbo(true)}>Kalender-Abo</button>}
+          {PROFILE.rules&&<button className="btn primary" onClick={()=>setRules(true)}>Regeln</button>}
         </div>
       </header>
 
       <section className="stats" aria-label="Wochensumme">
         <div className="stat goal">
           <div className="lab">Training netto</div>
-          <div className="num">{fmtH(stats.total)}<small>von {fmtH(TARGET_MIN)} h</small></div>
-          <div className={`bar${stats.total>TARGET_MIN*1.1?' over':''}`}><i style={{width:`${Math.min(100,stats.total/TARGET_MIN*100)}%`}}/></div>
+          <div className="num">{fmtH(stats.total)}<small>{PROFILE.target?`von ${fmtH(PROFILE.target)} h`:'h'}</small></div>
+          {PROFILE.target&&<div className={`bar${stats.total>PROFILE.target*1.1?' over':''}`}><i style={{width:`${Math.min(100,stats.total/PROFILE.target*100)}%`}}/></div>}
         </div>
-        <div className="disc">{SPORT.map(k=>(<span key={k}><i className="dot" style={{'--c':TYPES[k].c}}/>{TYPES[k].l} {fmtH(stats.by[k])}</span>))}</div>
+        <div className="disc">{SPORT.filter(k=>CORE_SPORT.includes(k)||stats.by[k]>0).map(k=>(<span key={k}><i className="dot" style={{'--c':TYPES[k].c}}/>{TYPES[k].l} {fmtH(stats.by[k])}</span>))}</div>
         <div className="stat"><div className="lab">Arbeit</div><div className="num">{fmtH(stats.arbeit)}<small>h</small></div></div>
         <div className="stat"><div className="lab">Baustelle</div><div className="num">{fmtH(stats.bau)}<small>h</small></div></div>
-        {hints.length
+        {!PROFILE.rules?null:hints.length
           ?<button className="hints-btn" onClick={()=>setShowHints(s=>!s)} aria-expanded={showHints}>{hints.length} {hints.length===1?'Regelverstoß':'Regelverstöße'} {showHints?'ausblenden':'anzeigen'}</button>
           :<span className="hints-btn ok">Keine Regelverstöße</span>}
       </section>
 
-      {showHints&&hints.length>0&&<ul className="hints">{hints.map((h,i)=><li key={i}>{h.t}<em>Regel {h.r}</em></li>)}</ul>}
+      {PROFILE.rules&&showHints&&hints.length>0&&<ul className="hints">{hints.map((h,i)=><li key={i}>{h.t}<em>Regel {h.r}</em></li>)}</ul>}
       {loadErr&&<div className="hints" role="alert">{loadErr}</div>}
       {!loading&&!loadErr&&!tpl&&blocks.length===0&&(
         <div className="empty"><span>Diese Woche ist noch leer. Starte mit der Musterwoche oder leg Blöcke direkt im Raster an.</span>
@@ -979,9 +1068,11 @@ function ConnectScreen({onConnect}){
 
 function App(){
   const [key,setKey]=useState(()=>DEMO?'demo-plan-ohne-supabase':readKey());
-  if(!key)return <ConnectScreen onConnect={k=>{connect(k);setKey(k);}}/>;
-  connect(key);
-  return <Planner/>;
+  const [profile,setProfile]=useState(readProfile);
+  if(!key)return <ConnectScreen onConnect={k=>{connect(k,profile);setKey(k);}}/>;
+  connect(key,profile);
+  const switchTo=p=>{try{localStorage.setItem(PROFILE_LS,p.id);}catch{}setProfile(p);};
+  return <Planner key={profile.id} onProfile={switchTo}/>;
 }
 
 ReactDOM.createRoot(document.getElementById('root')).render(<App/>);
